@@ -1,0 +1,31 @@
+backend/uploads/
+backend/output/
+backend/tessdata/
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+input/
+output/
+samples/nidar/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.DS_Store
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+.env.local
+
+# Customer documents and generated workbooks must never enter Git history.
+*.pdf
+*.docx
+*.pptx
+*.xlsx
+
+# These schema workbooks are application resources, not source documents.
+!samples/ipd-template.xlsx
+!samples/fabric-specs-mittet.xlsx
+!samples/filament-specs-taihing-nylon.xlsx
