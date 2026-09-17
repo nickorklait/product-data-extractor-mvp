@@ -1,0 +1,11 @@
+{
+  "name": "product-data-extractor-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace frontend"
+  }
+}

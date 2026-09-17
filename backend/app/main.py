@@ -1,9 +1,11 @@
+import os
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, gettempdir
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from .excel import create_batch_excel, create_excel, create_ipd_consolidated_excel, populate_ipd_rows
 from .models import ExtractionResult
@@ -11,10 +13,19 @@ from .parser import extract_structured_data, extract_text_from_file
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "output"
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+PROJECT_ROOT = BASE_DIR.parent
+IS_DATABRICKS = bool(os.getenv("DATABRICKS_APP_NAME") or os.getenv("PRODUCT_DATA_RUNTIME") == "databricks")
+RUNTIME_DIR = Path(
+    os.getenv(
+        "PRODUCT_DATA_TEMP_DIR",
+        str(Path(gettempdir()) / "product-data-extractor" if IS_DATABRICKS else BASE_DIR),
+    )
+)
+UPLOAD_DIR = RUNTIME_DIR / "uploads"
+OUTPUT_DIR = RUNTIME_DIR / "output"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 
 app = FastAPI(title="Product Data Extractor MVP")
 
@@ -103,3 +114,7 @@ def export_ipd_consolidated(results: list[ExtractionResult]) -> StreamingRespons
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )
+
+
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

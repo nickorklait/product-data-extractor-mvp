@@ -1,0 +1,17 @@
+bundle:
+  name: product-data-extractor-mvp
+
+resources:
+  apps:
+    product_data_extractor:
+      name: product-data-extractor-mvp
+      description: Product specification extraction and Excel review app
+      source_code_path: .
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+  prod:
+    mode: production

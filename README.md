@@ -176,4 +176,50 @@ Accepts a JSON array of extracted results and returns one organized IPD migratio
 - Uploaded files are written only as temporary files under `backend/uploads/` and deleted after extraction.
 - `backend/uploads/` and `backend/output/` are ignored by git.
 - No external AI APIs are used.
-- Document content is not sent outside the local app.
+- Document content is not sent to an external AI service. In local mode it stays on the machine; in Databricks Apps it stays inside the configured Databricks workspace boundary.
+
+## Databricks Apps deployment
+
+The repository is deployable as a single Databricks App without enabling AI extraction. During deployment, Databricks installs the root Python and Node dependencies, runs the Vite production build, and starts FastAPI with `app.yaml`. FastAPI serves both the `/api` endpoints and the compiled React frontend from one origin.
+
+This first Databricks milestone keeps uploaded files only in the app's ephemeral temporary directory and deletes each temporary upload after extraction. Excel workbooks are streamed directly to the browser. Unity Catalog persistence and Databricks model integration are intentionally deferred to the next milestone.
+
+### Prerequisites
+
+- A workspace region with Databricks Apps support.
+- Databricks CLI 0.239.0 or newer.
+- OAuth access to the target workspace.
+- Workspace network access to the configured Python and npm package registries.
+
+### Validate and deploy
+
+Authenticate the CLI using the workspace URL:
+
+```powershell
+databricks auth login --host https://<workspace-host>
+```
+
+From the repository root, validate and deploy the development target:
+
+```powershell
+databricks bundle validate -t dev
+databricks bundle deploy -t dev
+databricks bundle run product_data_extractor -t dev
+```
+
+The bundle creates the `product-data-extractor-mvp` Databricks App. Databricks injects `DATABRICKS_APP_PORT`; `run_app.py` binds FastAPI to that port on `0.0.0.0`.
+
+The same production build can be tested locally:
+
+```powershell
+npm install
+npm run build
+$env:PORT = "8000"
+python run_app.py
+```
+
+Open http://localhost:8000 and verify upload, review, and Excel download through the single FastAPI origin.
+
+### OCR limitation in milestone 1
+
+Native PDF text and DOCX text/tables work in Databricks. Image-only PDFs and DOCX files containing screenshots currently depend on the Tesseract system executable, which is not installed by the Databricks App package build. Those documents return an OCR warning and remain the main target for the approved Databricks vision model in milestone 2.
