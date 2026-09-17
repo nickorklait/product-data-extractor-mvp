@@ -4,3 +4,5 @@ command:
 env:
   - name: PRODUCT_DATA_RUNTIME
     value: databricks
+  - name: PRODUCT_DATA_VOLUME_PATH
+    valueFrom: volume

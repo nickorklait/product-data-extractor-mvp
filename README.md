@@ -155,6 +155,14 @@ Returns:
 { "status": "ok" }
 ```
 
+### GET /api/storage-status
+
+Returns whether persistent Unity Catalog Volume archival is configured:
+
+```json
+{ "enabled": true }
+```
+
 ### POST /api/extract
 
 Accepts a multipart file upload named `file`. Supports `.pdf` and `.docx`.
@@ -173,7 +181,7 @@ Accepts a JSON array of extracted results and returns one organized IPD migratio
 
 ## Security Notes
 
-- Uploaded files are written only as temporary files under `backend/uploads/` and deleted after extraction.
+- Uploaded files are written to temporary processing storage and deleted after extraction. When a Unity Catalog Volume is configured, a governed source copy is also archived there.
 - `backend/uploads/` and `backend/output/` are ignored by git.
 - No external AI APIs are used.
 - Document content is not sent to an external AI service. In local mode it stays on the machine; in Databricks Apps it stays inside the configured Databricks workspace boundary.
@@ -182,7 +190,28 @@ Accepts a JSON array of extracted results and returns one organized IPD migratio
 
 The repository is deployable as a single Databricks App without enabling AI extraction. During deployment, Databricks installs the root Python and Node dependencies, runs the Vite production build, and starts FastAPI with `app.yaml`. FastAPI serves both the `/api` endpoints and the compiled React frontend from one origin.
 
-This first Databricks milestone keeps uploaded files only in the app's ephemeral temporary directory and deletes each temporary upload after extraction. Excel workbooks are streamed directly to the browser. Unity Catalog persistence and Databricks model integration are intentionally deferred to the next milestone.
+Temporary processing files are deleted after extraction. The configured Unity Catalog Volume archives source documents, failed documents, and generated Excel workbooks. Excel workbooks are still streamed directly to the browser. Databricks model integration is intentionally deferred to the next milestone.
+
+### Configure persistent file storage
+
+Before deploying this revision, create or select a Unity Catalog Volume and attach it to the app:
+
+1. In Catalog Explorer, create or select a catalog and schema.
+2. Create a managed volume, for example `product_data_files`.
+3. Open the Databricks App, then open **Settings** and **App resources**.
+4. Add a **UC volume** resource with **Can read and write**.
+5. Keep the resource key as `volume`; `app.yaml` maps that resource to `PRODUCT_DATA_VOLUME_PATH`.
+6. Redeploy the app from the `main` branch.
+
+The app creates this structure inside the selected volume:
+
+```text
+source/YYYY/MM/DD/<processing-id>_<source-file>
+failed/YYYY/MM/DD/<processing-id>_<source-file>
+excel/YYYY/MM/DD/<processing-id>_<workbook>.xlsx
+```
+
+Check `/api/storage-status` after deployment. It must return `{ "enabled": true }`. Archive failures do not block extraction or browser downloads: source archive failures appear as extraction warnings, and all failures are written to the Databricks App logs.
 
 ### Prerequisites
 
@@ -215,6 +244,7 @@ The same production build can be tested locally:
 npm install
 npm run build
 $env:PORT = "8000"
+$env:PRODUCT_DATA_VOLUME_PATH = "C:\temp\product-data-volume"
 python run_app.py
 ```
 

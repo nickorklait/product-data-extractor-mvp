@@ -134,6 +134,7 @@ class ChangeLogEntry(BaseModel):
 
 
 class ExtractionResult(BaseModel):
+    processing_id: Optional[str] = None
     metadata: DocumentMetadata
     nutrition: Nutrition
     allergens: Allergens
