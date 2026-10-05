@@ -179,7 +179,7 @@ function App() {
       const link = document.createElement('a');
       link.href = url;
       link.download = isConsolidated
-        ? 'nidar-ipd-consolidated.xlsx'
+        ? 'snacks-phase1-comparison.xlsx'
         : (isBatch
           ? 'product-data-batch.xlsx'
           : `${exportPayloads[0].metadata?.product_name || 'product-data-extraction'}.xlsx`);
@@ -213,7 +213,7 @@ function App() {
             className={excelLayout === 'ipd-consolidated' ? 'active' : ''}
             onClick={() => setExcelLayout('ipd-consolidated')}
           >
-            IPD consolidated
+            Phase 1 comparison
           </button>
           <button
             type="button"
@@ -380,7 +380,7 @@ function ResultsDashboard({
         <button className="export-button" onClick={onExport} disabled={isExporting}>
           {isExporting ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
           {excelLayout === 'ipd-consolidated'
-            ? `Export IPD overview (${batchCount})`
+            ? `Export comparison (${batchCount})`
             : (batchCount > 1 ? `Export ${batchCount} files` : 'Export to Excel')}
         </button>
       </div>
@@ -392,7 +392,7 @@ function ResultsDashboard({
         </div>
         <p>
           {excelLayout === 'ipd-consolidated'
-            ? 'All documents will be exported into one reviewable IPD workbook with field status, source references, approvals, and change history.'
+            ? 'All documents will be exported side by side against the customer\'s Phase 1 attributes, with values, completeness, missing fields, evidence, approvals, and change history.'
             : profileDescription(result.output_profile)}
         </p>
       </section>
@@ -494,8 +494,8 @@ function IPDReviewTable({ rows, onRowChange, onApproveFound }) {
     <section className="ipd-review">
       <div className="review-header">
         <div>
-          <p className="eyebrow">Migration control</p>
-          <h3>IPD attribute review</h3>
+          <p className="eyebrow">Phase 1 control</p>
+          <h3>Customer attribute review</h3>
         </div>
         <button className="approve-button" type="button" onClick={onApproveFound} disabled={!found || approved === found}>
           <CheckCircle2 size={18} aria-hidden="true" />
@@ -512,7 +512,7 @@ function IPDReviewTable({ rows, onRowChange, onApproveFound }) {
       </div>
 
       <div className="review-toolbar">
-        <div className="review-tabs" role="group" aria-label="Filter IPD attributes">
+        <div className="review-tabs" role="group" aria-label="Filter Phase 1 attributes">
           {[
             ['attention', 'Needs attention'],
             ['found', 'Found'],
@@ -535,7 +535,7 @@ function IPDReviewTable({ rows, onRowChange, onApproveFound }) {
           type="search"
           value={query}
           placeholder="Search attributes"
-          aria-label="Search IPD attributes"
+          aria-label="Search Phase 1 attributes"
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
@@ -1021,7 +1021,7 @@ function updateDynamicField(result, index, value) {
 function profileLabel(profile) {
   if (profile === 'roller_fabric') return 'Roller fabric specification';
   if (profile === 'filament_spec') return 'Filament specification';
-  if (profile === 'food_ipd') return 'IPD food migration template';
+  if (profile === 'food_ipd') return 'Snacks Phase 1 attributes';
   if (profile === 'gnt_exberry') return 'GNT Exberry specification template';
   return 'Flexible extracted data workbook';
 }
@@ -1034,10 +1034,10 @@ function profileDescription(profile) {
     return 'Export uses the customer\'s 123-field filament schema and includes its schema dictionary plus source review sheets.';
   }
   if (profile === 'food_ipd') {
-    return 'Export uses the customer IPD attribute rows and includes raw OCR lines and selected candidates for review.';
+    return 'Export uses the customer\'s 52 Snacks Phase 1 attributes and includes raw OCR lines and selected candidates for review.';
   }
   if (profile === 'gnt_exberry') {
-    return 'Recognized GNT Exberry tables are captured as structured specification rows and mapped into the IPD workbook where fields match.';
+    return 'Recognized GNT Exberry tables are captured as structured specification rows and mapped into the Phase 1 workbook where fields match.';
   }
   return 'No known schema was detected. Export preserves dynamic fields, selected candidates, and raw source lines.';
 }

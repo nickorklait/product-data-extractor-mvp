@@ -20,7 +20,7 @@ This MVP uses deterministic extraction. It is designed for transparent review. A
 - Python FastAPI extraction and export API.
 - `python-docx`, `pdfplumber`, and local Tesseract OCR for text and embedded images.
 - Deterministic regex, keyword, table-OCR, and Pydantic-based mapping. No external AI API.
-- Browser-memory review state with editable IPD rows, field approval, source references, and a local change log.
+- Browser-memory review state with editable Phase 1 rows, field approval, source references, and a local change log.
 - pandas + openpyxl exports for review and migration preparation.
 - Temporary local uploads only; no database, enterprise identity, or direct IPD/PLM connection.
 
@@ -28,7 +28,7 @@ This MVP uses deterministic extraction. It is designed for transparent review. A
 
 - Runs inside Orkla's Databricks environment and reads from a restricted project folder.
 - Uses an approved vision-language model to understand supplier pages and pasted screenshots.
-- Maps extracted values to the 165 IPD attributes with unit and source evidence per field.
+- Starts with the 52 customer-approved Snacks Phase 1 attributes and can expand to the wider IPD scope later.
 - Stores editable review results in Lakebase.
 - Records uploader, model output, human edits, approval, and load activity as an audit trail.
 - Produces approved IPD and PLM load files; no data is loaded before superuser approval.
@@ -108,7 +108,7 @@ Open http://localhost:5173, drag and drop one or more `.docx`/`.pdf` product spe
 
 After extraction completes, review the dashboard and click **Export to Excel**. The workbook includes:
 
-1. IPD_Template: customer attribute rows from `samples/ipd-template.xlsx`, with `Data` and `UoM` filled where the deterministic extractor has a confident match.
+1. Phase1_Attributes: the 52 customer attribute rows from `samples/snacks-phase1-attributes.xlsx`, with `Data` and `UoM` filled where the deterministic extractor has a confident match.
 2. Summary
 3. Nutrition
 4. Allergens
@@ -123,27 +123,27 @@ The export also includes review-oriented sheets for messy supplier formats:
 - Raw_Lines: every extracted/OCR line with line number and inferred section.
 - Review_Flags: values that may need manual review, especially OCR-heavy nutrition values.
 
-The `IPD_Template` sheet is intentionally conservative: if the app cannot confidently map a document value to a customer attribute, the cell is left blank and the source text remains available in the review sheets.
+The `Phase1_Attributes` sheet is intentionally conservative: if the app cannot confidently map a document value to a customer attribute, the cell is left blank and the source text remains available in the review sheets.
 
 The app also supports output profiles. Roller-fabric forms are detected automatically and exported to the 65-column `Fabric_Specs_Mittet` schema. Tai Hing filament specifications are exported to the 123-field `Filament_Specs_Taihing_Nylon` schema. Both retain the supplied `Schema Dictionary` and review sheets. Documents that do not match a known profile use a flexible extracted-data workbook so captured content is not discarded.
 
 For local port conflicts, set `VITE_BACKEND_TARGET` in `frontend/.env.local`. The normal default remains `http://127.0.0.1:8000`.
 
-Select **IPD consolidated** to export every successfully extracted document to one organized workbook. `Overview` contains one row per product, `Allergens` shows the 14 regulated allergen groups explicitly, and `IPD_Mapped` contains only populated migration values. The complete approved attribute list remains in `IPD_All_Attributes`; generic captures, warnings, and raw OCR are separated into review sheets so unfamiliar supplier content is retained without cluttering the main overview.
+Select **Phase 1 comparison** to export every successfully extracted document to one organized workbook. `Comparison` places documents in rows and all 52 requested attributes in columns. `Completeness` shows a color-coded Found/Missing matrix, and `Missing_Attributes` provides a filterable gap list. `Phase1_Found` contains populated values, while `Phase1_Detail` retains every requested attribute with source evidence and review status. Generic captures, warnings, and raw OCR remain in separate review sheets.
 
 Image-based allergen declarations receive a second table-oriented OCR pass. Yes/No values and declared quantities are mapped to dedicated fields and color-coded in Excel. A declaration that is detected without readable statuses is flagged for manual review rather than treated as allergen-free.
 
-Physical, chemical, typical-value, and microbiological specification tables are preserved row by row in the browser and in a dedicated `Specifications` sheet. Limits, ranges, units, qualifiers such as `max`/`min`/`approx`, and source evidence remain separate. Confident matches are also mapped into IPD fields; unmatched rows stay visible instead of being forced into the wrong attribute.
+Physical, chemical, typical-value, and microbiological specification tables are preserved row by row in the browser and in a dedicated `Specifications` sheet. Limits, ranges, units, qualifiers such as `max`/`min`/`approx`, and source evidence remain separate. Confident matches are also mapped into Phase 1 fields; unmatched rows stay visible instead of being forced into the wrong attribute.
 
 GNT Exberry specifications are recognized as a reusable supplier-family template. Their manufacturing, colouring, physical/chemical, microbiological, general appearance, nutrition, and shelf-life tables are captured consistently across product colours. Common OCR unit substitutions are normalized but remain marked for review when the source image is ambiguous.
 
-The browser also exposes the complete 165-attribute IPD worklist. It shows found, missing, and approved counts; sorts unresolved fields for review; allows direct value/unit edits and row approval; and records those actions in the exported `Change_Log` sheet. Source evidence identifies the PDF page or embedded Word image and includes the extracted source line.
+The browser exposes the complete 52-attribute Phase 1 worklist across Allergens, Diet, Religious, Nutrient, and General groups. It shows found, missing, and approved counts; sorts unresolved fields for review; allows direct value/unit edits and row approval; and records those actions in the exported `Change_Log` sheet. Source evidence identifies the PDF page or embedded Word image and includes the extracted source line.
 
 Select **Document sheets** to retain the previous batch layout: one workbook with a `Batch_Index` sheet and one customer-shaped data sheet per successfully extracted document. Mixed output profiles can be included in the same batch.
 
 Unknown formats use deterministic key-value capture. Their detected fields remain editable and exportable. A reviewed example and desired workbook can then be added as a reusable output profile, without changing previously supported profiles.
 
-To update the customer migration attribute list later, replace `samples/ipd-template.xlsx` with the latest approved template using the same header columns.
+To update this scope later, replace `samples/snacks-phase1-attributes.xlsx` with the latest approved two-column Group/Attribute workbook.
 
 ## API
 
@@ -177,7 +177,7 @@ Accepts a JSON array of extracted results and returns one workbook containing a 
 
 ### POST /api/export-ipd-consolidated
 
-Accepts a JSON array of extracted results and returns one organized IPD migration workbook for the complete batch.
+Accepts a JSON array of extracted results and returns one organized Snacks Phase 1 comparison workbook for the complete batch.
 
 ## Security Notes
 

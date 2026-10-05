@@ -147,8 +147,8 @@ def export_ipd_consolidated(results: list[ExtractionResult]) -> StreamingRespons
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Consolidated IPD export failed: {exc}") from exc
 
-    _archive_excel(excel_file.getvalue(), "nidar-ipd-consolidated.xlsx")
-    headers = {"Content-Disposition": 'attachment; filename="nidar-ipd-consolidated.xlsx"'}
+    _archive_excel(excel_file.getvalue(), "snacks-phase1-comparison.xlsx")
+    headers = {"Content-Disposition": 'attachment; filename="snacks-phase1-comparison.xlsx"'}
     return StreamingResponse(
         excel_file,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -14,6 +14,7 @@ from .models import ExtractionResult, IPDAttributeRow
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 IPD_TEMPLATE_PATH = PROJECT_ROOT / "samples" / "ipd-template.xlsx"
+PHASE1_TEMPLATE_PATH = PROJECT_ROOT / "samples" / "snacks-phase1-attributes.xlsx"
 FABRIC_TEMPLATE_PATH = PROJECT_ROOT / "samples" / "fabric-specs-mittet.xlsx"
 FILAMENT_TEMPLATE_PATH = PROJECT_ROOT / "samples" / "filament-specs-taihing-nylon.xlsx"
 IPD_HEADERS = ["Spec ID from document", "Node", "Attribute", "Attribute description", "Data", "UoM", "Comments"]
@@ -39,7 +40,7 @@ def create_excel(result: ExtractionResult) -> BytesIO:
     data = result.model_dump()
 
     first_sheet = (
-        {"IPD_Template": build_ipd_template_rows(result)}
+        {"Phase1_Attributes": build_ipd_template_rows(result)}
         if result.output_profile in {"food_ipd", "gnt_exberry"}
         else {"Extracted_Data": normalize_rows(data.get("dynamic_fields", []))}
     )
@@ -106,8 +107,11 @@ def create_batch_excel(results: list[ExtractionResult]) -> BytesIO:
 
 
 def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
-    """Create a clean overview workbook with complete migration and review detail."""
+    """Create the Snacks Phase 1 comparison workbook with review evidence."""
     workbook = Workbook()
+    comparison_rows: list[dict[str, Any]] = []
+    completeness_rows: list[dict[str, Any]] = []
+    missing_rows: list[dict[str, Any]] = []
     overview_rows: list[dict[str, Any]] = []
     allergen_rows: list[dict[str, Any]] = []
     mapped_rows: list[dict[str, Any]] = []
@@ -117,6 +121,10 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
     raw_rows: list[dict[str, Any]] = []
     change_rows: list[dict[str, Any]] = []
     specification_rows: list[dict[str, Any]] = []
+    phase1_definitions = [
+        (str(row.get("Node") or ""), str(row.get("Attribute") or ""))
+        for row in load_ipd_template_rows()
+    ]
 
     for result in results:
         metadata = result.metadata
@@ -152,6 +160,38 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
             if value and normalize_yes_no_trace(value) != "No"
         ]
 
+        values_by_attribute = {
+            (simplify(row.get("Node")), simplify(row.get("Attribute"))): row
+            for row in document_ipd_rows
+        }
+        comparison_row: dict[str, Any] = {
+            **common,
+            "Document ID": metadata.document_id or "",
+            "Found": found_count,
+            "Missing": len(document_ipd_rows) - found_count,
+            "Coverage": round((found_count / len(document_ipd_rows)) * 100, 1) if document_ipd_rows else 0,
+        }
+        completeness_row: dict[str, Any] = dict(comparison_row)
+        for group, attribute in phase1_definitions:
+            heading = phase1_column_heading(group, attribute)
+            mapped_row = values_by_attribute.get((simplify(group), simplify(attribute)), {})
+            data_value = str(mapped_row.get("Data") or "").strip()
+            uom = str(mapped_row.get("UoM") or "").strip()
+            comparison_row[heading] = comparison_cell_value(data_value, uom) if data_value else "Not found"
+            completeness_row[heading] = "Found" if data_value else "Missing"
+            if not data_value:
+                missing_rows.append(
+                    {
+                        **common,
+                        "Document ID": metadata.document_id or "",
+                        "Group": group,
+                        "Attribute": attribute,
+                        "Status": "Missing",
+                    }
+                )
+        comparison_rows.append(comparison_row)
+        completeness_rows.append(completeness_row)
+
         overview_rows.append(
             {
                 **common,
@@ -164,8 +204,8 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
                 "Storage": result.storage.storage_text or "",
                 "Allergens reported": "; ".join(declared_allergens) or "None reported",
                 "Allergen fields captured": f"{captured_allergens}/14",
-                "IPD fields found": f"{found_count}/{len(document_ipd_rows)}",
-                "IPD coverage": f"{round((found_count / len(document_ipd_rows)) * 100, 1) if document_ipd_rows else 0}%",
+                "Phase 1 fields found": f"{found_count}/{len(document_ipd_rows)}",
+                "Phase 1 coverage": f"{round((found_count / len(document_ipd_rows)) * 100, 1) if document_ipd_rows else 0}%",
                 "Approved fields": f"{approved_count}/{found_count}",
                 "Energy kJ": result.nutrition.energy_kj or "",
                 "Energy kcal": result.nutrition.energy_kcal or "",
@@ -252,11 +292,14 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
             change_rows.append({**common, **entry.model_dump()})
 
     sheets = {
+        "Comparison": comparison_rows,
+        "Completeness": completeness_rows,
+        "Missing_Attributes": missing_rows,
         "Overview": overview_rows,
         "Allergens": allergen_rows,
         "Specifications": specification_rows,
-        "IPD_Mapped": mapped_rows,
-        "IPD_All_Attributes": all_ipd_rows,
+        "Phase1_Found": mapped_rows,
+        "Phase1_Detail": all_ipd_rows,
         "Captured_Review": captured_rows,
         "Warnings": warning_rows,
         "Change_Log": change_rows,
@@ -269,6 +312,10 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
         format_worksheet(worksheet)
         worksheet.sheet_view.showGridLines = False
 
+    workbook["Comparison"].freeze_panes = "H2"
+    workbook["Completeness"].freeze_panes = "H2"
+    format_phase1_matrix(workbook["Comparison"], phase1_definitions, status_matrix=False)
+    format_phase1_matrix(workbook["Completeness"], phase1_definitions, status_matrix=True)
     workbook["Overview"].column_dimensions["A"].width = 46
     workbook["Overview"].column_dimensions["B"].width = 34
     workbook["Allergens"].column_dimensions["A"].width = 46
@@ -315,6 +362,43 @@ def format_allergen_sheet(worksheet) -> None:
                 cell.fill = fills["other"]
             else:
                 cell.fill = fills["missing"]
+
+
+def phase1_column_heading(group: str, attribute: str) -> str:
+    return f"{group} | {attribute}"
+
+
+def comparison_cell_value(value: str, unit: str, limit: int = 500) -> str:
+    combined = combine_value_unit(value, unit)
+    if len(combined) <= limit:
+        return combined
+    return f"{combined[:limit - 3]}..."
+
+
+def format_phase1_matrix(worksheet, definitions: list[tuple[str, str]], status_matrix: bool) -> None:
+    metadata_columns = 8
+    group_fills = {
+        "allergens": PatternFill("solid", fgColor="F6D6D9"),
+        "diet": PatternFill("solid", fgColor="DCEBDD"),
+        "religious": PatternFill("solid", fgColor="F5E4B8"),
+        "nutrient": PatternFill("solid", fgColor="D9E8F5"),
+        "general": PatternFill("solid", fgColor="E3E5E8"),
+    }
+    found_fill = PatternFill("solid", fgColor="DCEFE5")
+    missing_fill = PatternFill("solid", fgColor="F8D7DA")
+
+    for offset, (group, _attribute) in enumerate(definitions, start=metadata_columns + 1):
+        worksheet.cell(1, offset).fill = group_fills.get(simplify(group), PatternFill("solid", fgColor="E3E5E8"))
+        worksheet.column_dimensions[get_column_letter(offset)].width = 22
+        for row_number in range(2, worksheet.max_row + 1):
+            cell = worksheet.cell(row_number, offset)
+            if status_matrix:
+                cell.fill = found_fill if cell.value == "Found" else missing_fill
+            elif cell.value == "Not found":
+                cell.fill = missing_fill
+
+    for column in range(1, metadata_columns + 1):
+        worksheet.column_dimensions[get_column_letter(column)].width = 20
 
 
 def unique_sheet_name(preferred_name: str, used_names: set[str]) -> str:
@@ -527,7 +611,10 @@ def find_ipd_source(
             "lupin": "lupin",
             "molluscs": "molluscs",
         }
-        marker_name = allergen_marker_names.get(simplify(attribute))
+        canonical_key = canonical_allergen_key(simplify(attribute))
+        if canonical_key in {"pecan", "walnut", "pistachio", "cashew", "hazelnut", "othernuts", "almonds"}:
+            canonical_key = "nuts"
+        marker_name = allergen_marker_names.get(canonical_key)
         marker = f"allergen value - {marker_name}:" if marker_name else ""
         for line in result.raw_lines:
             if marker and marker in line.text.casefold():
@@ -564,6 +651,10 @@ def find_ipd_source(
 
 
 def load_ipd_template_rows() -> list[dict[str, Any]]:
+    phase1_rows = load_phase1_template_rows()
+    if phase1_rows:
+        return phase1_rows
+
     if not IPD_TEMPLATE_PATH.exists():
         return fallback_ipd_template_rows()
 
@@ -585,6 +676,31 @@ def load_ipd_template_rows() -> list[dict[str, Any]]:
         if not any(value is not None for value in values):
             continue
         rows.append(dict(zip(IPD_HEADERS, values)))
+    return rows
+
+
+def load_phase1_template_rows() -> list[dict[str, Any]]:
+    if not PHASE1_TEMPLATE_PATH.exists():
+        return []
+
+    workbook = load_workbook(PHASE1_TEMPLATE_PATH, data_only=True, read_only=True)
+    worksheet = workbook[workbook.sheetnames[0]]
+    rows: list[dict[str, Any]] = []
+    for group, attribute, *_rest in worksheet.iter_rows(values_only=True):
+        if not group or not attribute:
+            continue
+        rows.append(
+            {
+                "Spec ID from document": "",
+                "Node": str(group).strip().title(),
+                "Attribute": str(attribute).strip(),
+                "Attribute description": "",
+                "Data": "",
+                "UoM": "",
+                "Comments": "",
+            }
+        )
+    workbook.close()
     return rows
 
 
@@ -670,13 +786,27 @@ def map_ipd_value(
         if result.output_profile == "gnt_exberry":
             return mapped
         return mapped if mapped[0] else map_generic_ipd_candidate(attribute, candidates, allow_partial=False)
-    if node_key == "nutrientsqualityinterfaceper100gm":
+    if node_key in {"nutrient", "nutrientsqualityinterfaceper100gm"}:
         mapped = map_nutrition_value(result, attribute_key, description_key)
         if result.output_profile == "gnt_exberry":
             return mapped
         return mapped if mapped[0] else map_generic_ipd_candidate(attribute, candidates, allow_partial=False)
     if node_key == "allergens":
         return map_allergen_value(result, attribute_key, candidates)
+    if node_key == "diet":
+        return map_boolean_candidate(
+            attribute,
+            candidates,
+            diet_attribute_aliases(attribute_key),
+            "Mapped from diet declaration/key-value candidates. Review source wording.",
+        )
+    if node_key == "religious":
+        return map_boolean_candidate(
+            attribute,
+            candidates,
+            religious_attribute_aliases(attribute_key),
+            "Mapped from certification declaration/key-value candidates.",
+        )
     if node_key in {"microbiologicalproperties", "microbiologicalrequirements", "microbiology"}:
         mapped = map_microbiological_value(result, attribute_key, description_key)
         if result.output_profile == "gnt_exberry":
@@ -722,12 +852,12 @@ def map_general_value(
     description_key: str,
     candidates: list[Any],
 ) -> tuple[str, str, str]:
-    if attribute_key == "generaldescription":
+    if attribute_key in {"generaldescription", "description"}:
         description = result.physical_chemical.physical_chemical_text or result.raw_text_excerpt or ""
         return description, "", "Free text excerpt. Review and shorten before migration." if description else ""
     if attribute_key == "rawmaterialname":
         return result.metadata.product_name or "", "", "Mapped from extracted product name." if result.metadata.product_name else ""
-    if attribute_key == "countryoforigin":
+    if attribute_key in {"countryoforigin", "origin"}:
         value = find_candidate_value(candidates, ["country of origin", "origin", "opprinnelse", "land"])
         return value, "", "Mapped from extracted key-value candidates. Review before migration." if value else ""
     if attribute_key == "shelflife":
@@ -736,14 +866,27 @@ def map_general_value(
             result.shelf_life.shelf_life_unit,
         )
         return value, "", "Mapped from shelf-life extraction." if value else ""
-    if attribute_key == "storage":
+    if attribute_key in {"storage", "storagecondition", "storagetemperatureminmax"}:
         min_temp, max_temp = split_temperature_range(result.storage.storage_temperature)
+        if attribute_key == "storagetemperatureminmax":
+            if min_temp and max_temp:
+                return f"{min_temp} - {max_temp}", "C", "Mapped from storage temperature range."
+            return min_temp or max_temp, "C" if min_temp or max_temp else "", "Mapped from storage temperature."
+        if attribute_key == "storagecondition":
+            return result.storage.storage_text or "", "", "Mapped from storage extraction." if result.storage.storage_text else ""
         if description_key == "min":
             return min_temp, "C", "Mapped from storage temperature. Review unit and range." if min_temp else ""
         if description_key == "max":
             return max_temp, "C", "Mapped from storage temperature. Review unit and range." if max_temp else ""
         if description_key == "storageconditions":
             return result.storage.storage_text or "", "", "Mapped from storage extraction." if result.storage.storage_text else ""
+    if attribute_key == "density":
+        value, uom = split_value_and_unit(result.physical_chemical.density)
+        if value:
+            return value, uom, "Mapped from density extraction."
+        row = find_specification_row(result, ["density", "bulk density", "poured bulk density"])
+        if row:
+            return specification_row_value(row), row.unit or "", "Mapped from specification table."
     return "", "", ""
 
 
@@ -882,7 +1025,7 @@ def map_nutrition_value(result: ExtractionResult, attribute_key: str, descriptio
         "salt": (result.nutrition.salt_g, "g"),
     }
     mapped = nutrition_map.get(attribute_key)
-    if not mapped or description_key not in {"min", "max"}:
+    if not mapped or description_key not in {"", "min", "max"}:
         return "", "", ""
     value, default_uom = mapped
     data_value, uom = split_value_and_unit(value)
@@ -927,13 +1070,93 @@ def map_allergen_value(
         "lupin": result.allergens.lupin,
         "molluscs": result.allergens.molluscs,
     }
-    value = allergen_fields.get(attribute_key) or find_candidate_value(
-        candidates,
-        allergen_aliases.get(attribute_key, [attribute_key]),
-    )
+    canonical_key = canonical_allergen_key(attribute_key)
+    specific_nut_aliases = {
+        "pecan": ["pecan", "pecannott", "pekannott"],
+        "walnut": ["walnut", "valnott"],
+        "pistachio": ["pistachio", "pistasj"],
+        "cashew": ["cashew", "cashewnott"],
+        "hazelnut": ["hazelnut", "hasselnott"],
+        "almonds": ["almond", "almonds", "mandel", "mandler"],
+    }
+    general_nuts_value = result.allergens.nuts or find_candidate_value(candidates, allergen_aliases["nuts"])
+    if canonical_key in specific_nut_aliases:
+        value = find_candidate_value(candidates, specific_nut_aliases[canonical_key])
+        if not value and normalize_yes_no_trace(general_nuts_value) == "No":
+            value = "No"
+    elif canonical_key == "othernuts":
+        value = find_candidate_value(candidates, ["other nuts", "andre notter"])
+        if not value and normalize_yes_no_trace(general_nuts_value) == "No":
+            value = "No"
+    else:
+        value = allergen_fields.get(canonical_key) or find_candidate_value(
+            candidates,
+            allergen_aliases.get(canonical_key, [canonical_key]),
+        )
     if not value:
         return "", "", ""
     return normalize_yes_no_trace(value), "", "Mapped from allergen checklist/key-value candidates. Review OCR spelling."
+
+
+def canonical_allergen_key(attribute_key: str) -> str:
+    aliases = {
+        "cerealscontainingglutenandproductsthereof": "gluten",
+        "crustaceansandproductsthereof": "crust",
+        "eggsandproductsthereof": "eggs",
+        "fishandproductsthereof": "fish",
+        "peanutsandproductthereof": "peanuts",
+        "soybeansandproductsthereof": "soya",
+        "milkandproductsthereofincludinglactose": "milk",
+        "nutsandproductsthereof": "nuts",
+        "celeryandproductsthereof": "celery",
+        "mustardandproductsthereof": "mustard",
+        "sesameseedsandproductsthereof": "sesame",
+        "sulphurdioxideandsulphitesifso210mgkgorl": "so2",
+        "lupineandproductsthereof": "lupin",
+        "molluscsandproductsthereof": "molluscs",
+        "pecan": "pecan",
+        "walnut": "walnut",
+        "pistachio": "pistachio",
+        "cashew": "cashew",
+        "hazelnut": "hazelnut",
+        "othernuts": "othernuts",
+        "almonds": "almonds",
+    }
+    return aliases.get(attribute_key, attribute_key)
+
+
+def map_boolean_candidate(
+    attribute: str,
+    candidates: list[Any],
+    aliases: list[str],
+    comment: str,
+) -> tuple[str, str, str]:
+    value = find_candidate_value(candidates, aliases or [attribute])
+    if not value:
+        return "", "", ""
+    return normalize_yes_no_trace(value), "", comment
+
+
+def diet_attribute_aliases(attribute_key: str) -> list[str]:
+    aliases = {
+        "vegetarian": ["vegetarian", "vegetar", "suitable for vegetarians"],
+        "vegan": ["vegan", "suitable for vegans"],
+        "organic": ["organic", "okologisk", "ecological"],
+        "nopalmoil": ["no palm oil", "palmoil free", "palm oil free"],
+        "fairtrade": ["fairtrade", "fair trade"],
+        "withoutbeef": ["without beef", "beef free", "no beef"],
+        "withoutpork": ["without pork", "pork free", "no pork"],
+        "fromnorwayfranorge": ["from norway", "fra norge", "norwegian origin"],
+    }
+    return aliases.get(attribute_key, [])
+
+
+def religious_attribute_aliases(attribute_key: str) -> list[str]:
+    aliases = {
+        "halal": ["halal", "halal certified", "halal certificate"],
+        "kosher": ["kosher", "kosher certified", "kosher certificate"],
+    }
+    return aliases.get(attribute_key, [])
 
 
 def find_candidate_value(candidates: list[Any], labels: list[str]) -> str:
@@ -942,7 +1165,18 @@ def find_candidate_value(candidates: list[Any], labels: list[str]) -> str:
         key = simplify(getattr(candidate, "key", ""))
         if not key:
             continue
-        if any(label_key and (label_key in key or key in label_key) for label_key in label_keys):
+        if any(
+            label_key
+            and (
+                label_key == key
+                or (
+                    len(label_key) >= 4
+                    and len(key) >= 4
+                    and (label_key in key or key in label_key)
+                )
+            )
+            for label_key in label_keys
+        ):
             return str(getattr(candidate, "value", "") or "").strip()
     return ""
 
@@ -950,7 +1184,8 @@ def find_candidate_value(candidates: list[Any], labels: list[str]) -> str:
 def split_temperature_range(value: str | None) -> tuple[str, str]:
     if not value:
         return "", ""
-    numbers = re.findall(r"[+-]?\d+(?:[,.]\d+)?", str(value))
+    text = re.sub(r"(?<=\d)\s*[-\u2013\u2014]\s*(?=\d)", " ", str(value))
+    numbers = re.findall(r"[+-]?\d+(?:[,.]\d+)?", text)
     if len(numbers) >= 2:
         return numbers[0], numbers[1]
     if len(numbers) == 1:

@@ -29,5 +29,6 @@ node_modules/
 
 # These schema workbooks are application resources, not source documents.
 !samples/ipd-template.xlsx
+!samples/snacks-phase1-attributes.xlsx
 !samples/fabric-specs-mittet.xlsx
 !samples/filament-specs-taihing-nylon.xlsx
