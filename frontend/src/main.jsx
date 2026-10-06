@@ -549,6 +549,7 @@ function IPDReviewTable({ rows, onRowChange, onApproveFound }) {
               <th>Attribute</th>
               <th>Data</th>
               <th>Unit</th>
+              <th>Full source text</th>
               <th>Source</th>
               <th className="select-cell">Approve</th>
             </tr>
@@ -575,6 +576,15 @@ function IPDReviewTable({ rows, onRowChange, onApproveFound }) {
                     value={row.uom ?? ''}
                     aria-label={`${row.attribute} unit`}
                     onChange={(event) => onRowChange(index, 'uom', event.target.value)}
+                  />
+                </td>
+                <td>
+                  <textarea
+                    value={row.full_text ?? ''}
+                    placeholder="Not found"
+                    rows={3}
+                    aria-label={`${row.attribute} full source text`}
+                    onChange={(event) => onRowChange(index, 'full_text', event.target.value)}
                   />
                 </td>
                 <td className="source-cell">

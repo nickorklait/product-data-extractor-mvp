@@ -177,7 +177,12 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
             mapped_row = values_by_attribute.get((simplify(group), simplify(attribute)), {})
             data_value = str(mapped_row.get("Data") or "").strip()
             uom = str(mapped_row.get("UoM") or "").strip()
-            comparison_row[heading] = comparison_cell_value(data_value, uom) if data_value else "Not found"
+            full_text = str(mapped_row.get("Full text") or "").strip()
+            comparison_row[heading] = comparison_cell_value(data_value, "") if data_value else "Not found"
+            if phase1_has_uom_column(group, attribute):
+                comparison_row[f"{heading} | UoM"] = uom or "Not found"
+            if phase1_has_full_text_column(group, attribute):
+                comparison_row[f"{heading} | Full text"] = full_text or "Not found"
             completeness_row[heading] = "Found" if data_value else "Missing"
             if not data_value:
                 missing_rows.append(
@@ -198,10 +203,13 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
                 "Document ID": metadata.document_id or "",
                 "Version": metadata.version or "",
                 "Approved date": metadata.approved_date or "",
-                "Shelf life": result.shelf_life.shelf_life_text
-                or combine_value_unit(result.shelf_life.shelf_life_value, result.shelf_life.shelf_life_unit),
-                "Storage temperature": result.storage.storage_temperature or "",
-                "Storage": result.storage.storage_text or "",
+                "Shelf life value": result.shelf_life.shelf_life_value or "Not found",
+                "Shelf life UoM": normalize_shelf_life_unit(result.shelf_life.shelf_life_unit) or "Not found",
+                "Shelf life full text": shelf_life_full_text(result) or "Not found",
+                "Storage temperature min": storage_temperature_parts(result)[0] or "Not found",
+                "Storage temperature max": storage_temperature_parts(result)[1] or "Not found",
+                "Storage temperature UoM": "C" if any(storage_temperature_parts(result)) else "Not found",
+                "Storage full text": storage_full_text(result) or "Not found",
                 "Allergens reported": "; ".join(declared_allergens) or "None reported",
                 "Allergen fields captured": f"{captured_allergens}/14",
                 "Phase 1 fields found": f"{found_count}/{len(document_ipd_rows)}",
@@ -314,7 +322,12 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
 
     workbook["Comparison"].freeze_panes = "H2"
     workbook["Completeness"].freeze_panes = "H2"
-    format_phase1_matrix(workbook["Comparison"], phase1_definitions, status_matrix=False)
+    comparison_definitions = [
+        (group, column)
+        for group, attribute in phase1_definitions
+        for column in phase1_comparison_column_names(group, attribute)
+    ]
+    format_phase1_matrix(workbook["Comparison"], comparison_definitions, status_matrix=False)
     format_phase1_matrix(workbook["Completeness"], phase1_definitions, status_matrix=True)
     workbook["Overview"].column_dimensions["A"].width = 46
     workbook["Overview"].column_dimensions["B"].width = 34
@@ -368,8 +381,36 @@ def phase1_column_heading(group: str, attribute: str) -> str:
     return f"{group} | {attribute}"
 
 
-def comparison_cell_value(value: str, unit: str, limit: int = 500) -> str:
+def phase1_has_uom_column(group: str, attribute: str) -> bool:
+    return simplify(group) == "nutrient" or (
+        simplify(group) == "general"
+        and simplify(attribute) in {"shelflife", "storagetemperatureminmax", "density"}
+    )
+
+
+def phase1_has_full_text_column(group: str, attribute: str) -> bool:
+    return simplify(group) == "general" and simplify(attribute) in {
+        "shelflife",
+        "storagecondition",
+        "storagetemperatureminmax",
+    }
+
+
+def phase1_comparison_column_names(group: str, attribute: str) -> list[str]:
+    heading = phase1_column_heading(group, attribute)
+    columns = [heading]
+    if phase1_has_uom_column(group, attribute):
+        columns.append(f"{heading} | UoM")
+    if phase1_has_full_text_column(group, attribute):
+        columns.append(f"{heading} | Full text")
+    return columns
+
+
+def comparison_cell_value(value: str, unit: str, limit: int = 500) -> Any:
     combined = combine_value_unit(value, unit)
+    if not unit and re.fullmatch(r"[+-]?\d+(?:[,.]\d+)?", combined.strip()):
+        normalized = combined.replace(",", ".")
+        return int(normalized) if "." not in normalized else float(normalized)
     if len(combined) <= limit:
         return combined
     return f"{combined[:limit - 3]}..."
@@ -387,7 +428,7 @@ def format_phase1_matrix(worksheet, definitions: list[tuple[str, str]], status_m
     found_fill = PatternFill("solid", fgColor="DCEFE5")
     missing_fill = PatternFill("solid", fgColor="F8D7DA")
 
-    for offset, (group, _attribute) in enumerate(definitions, start=metadata_columns + 1):
+    for offset, (group, _column) in enumerate(definitions, start=metadata_columns + 1):
         worksheet.cell(1, offset).fill = group_fills.get(simplify(group), PatternFill("solid", fgColor="E3E5E8"))
         worksheet.column_dimensions[get_column_letter(offset)].width = 22
         for row_number in range(2, worksheet.max_row + 1):
@@ -531,6 +572,7 @@ def build_ipd_template_rows(result: ExtractionResult) -> list[dict[str, Any]]:
         row["Spec ID from document"] = spec_id
         row["Data"] = data_value or ""
         row["UoM"] = uom or row["UoM"] or ""
+        row["Full text"] = phase1_full_text(result, node, attribute)
         row["Comments"] = join_comments(row["Comments"], comment)
         source_reference, source_excerpt = find_ipd_source(
             result,
@@ -558,6 +600,7 @@ def populate_ipd_rows(result: ExtractionResult) -> ExtractionResult:
             attribute_description=row.get("Attribute description") or None,
             data=row.get("Data") or None,
             uom=row.get("UoM") or None,
+            full_text=row.get("Full text") or None,
             comments=row.get("Comments") or None,
             source_reference=row.get("Source reference") or None,
             source_excerpt=row.get("Source excerpt") or None,
@@ -577,6 +620,7 @@ def ipd_model_to_row(row: IPDAttributeRow) -> dict[str, Any]:
         "Attribute description": row.attribute_description or "",
         "Data": row.data or "",
         "UoM": row.uom or "",
+        "Full text": row.full_text or "",
         "Comments": row.comments or "",
         "Source reference": row.source_reference or "",
         "Source excerpt": row.source_excerpt or "",
@@ -861,25 +905,25 @@ def map_general_value(
         value = find_candidate_value(candidates, ["country of origin", "origin", "opprinnelse", "land"])
         return value, "", "Mapped from extracted key-value candidates. Review before migration." if value else ""
     if attribute_key == "shelflife":
-        value = result.shelf_life.shelf_life_text or combine_value_unit(
-            result.shelf_life.shelf_life_value,
-            result.shelf_life.shelf_life_unit,
-        )
-        return value, "", "Mapped from shelf-life extraction." if value else ""
+        value = result.shelf_life.shelf_life_value or ""
+        uom = normalize_shelf_life_unit(result.shelf_life.shelf_life_unit)
+        return value, uom, "Mapped from shelf-life extraction." if value else ""
     if attribute_key in {"storage", "storagecondition", "storagetemperatureminmax"}:
-        min_temp, max_temp = split_temperature_range(result.storage.storage_temperature)
+        min_temp, max_temp = storage_temperature_parts(result)
         if attribute_key == "storagetemperatureminmax":
             if min_temp and max_temp:
                 return f"{min_temp} - {max_temp}", "C", "Mapped from storage temperature range."
             return min_temp or max_temp, "C" if min_temp or max_temp else "", "Mapped from storage temperature."
         if attribute_key == "storagecondition":
-            return result.storage.storage_text or "", "", "Mapped from storage extraction." if result.storage.storage_text else ""
+            value = storage_full_text(result)
+            return value, "", "Mapped from storage extraction." if value else ""
         if description_key == "min":
             return min_temp, "C", "Mapped from storage temperature. Review unit and range." if min_temp else ""
         if description_key == "max":
             return max_temp, "C", "Mapped from storage temperature. Review unit and range." if max_temp else ""
         if description_key == "storageconditions":
-            return result.storage.storage_text or "", "", "Mapped from storage extraction." if result.storage.storage_text else ""
+            value = storage_full_text(result)
+            return value, "", "Mapped from storage extraction." if value else ""
     if attribute_key == "density":
         value, uom = split_value_and_unit(result.physical_chemical.density)
         if value:
@@ -1191,6 +1235,87 @@ def split_temperature_range(value: str | None) -> tuple[str, str]:
     if len(numbers) == 1:
         return numbers[0], numbers[0]
     return "", ""
+
+
+def storage_temperature_parts(result: ExtractionResult) -> tuple[str, str]:
+    minimum, maximum = split_temperature_range(result.storage.storage_temperature)
+    if minimum and maximum and minimum != maximum:
+        return minimum, maximum
+
+    storage_text = result.storage.storage_text or ""
+    temperature_context = re.search(
+        r"(?:temperature|temperatur)[^\n\r.;]{0,100}",
+        storage_text,
+        flags=re.IGNORECASE,
+    )
+    if temperature_context:
+        text_minimum, text_maximum = split_temperature_range(temperature_context.group(0))
+        if text_minimum and text_maximum:
+            return text_minimum, text_maximum
+    return minimum, maximum
+
+
+def normalize_shelf_life_unit(value: str | None) -> str:
+    key = simplify(value)
+    if key in {"day", "days", "dag", "dager", "dogn"}:
+        return "days"
+    if key in {"month", "months", "maned", "maneder", "mnd"}:
+        return "months"
+    if key in {"week", "weeks", "uke", "uker"}:
+        return "weeks"
+    if key in {"year", "years", "ar"}:
+        return "years"
+    return str(value or "").strip()
+
+
+def phase1_full_text(result: ExtractionResult, node: str, attribute: str) -> str:
+    if simplify(node) != "general":
+        return ""
+    attribute_key = simplify(attribute)
+    if attribute_key == "shelflife":
+        return shelf_life_full_text(result)
+    if attribute_key in {"storage", "storagecondition", "storagetemperatureminmax"}:
+        return storage_full_text(result)
+    if attribute_key == "density":
+        return result.physical_chemical.physical_chemical_text or ""
+    return ""
+
+
+def shelf_life_full_text(result: ExtractionResult) -> str:
+    return focused_review_text(
+        result.shelf_life.shelf_life_text,
+        ["directive", "direktiv", "regulation", "forordning", "forskrift"],
+    )
+
+
+def storage_full_text(result: ExtractionResult) -> str:
+    return focused_review_text(
+        result.storage.storage_text,
+        [
+            "shelf life",
+            "holdbarhet",
+            "directive",
+            "direktiv",
+            "regulation",
+            "forordning",
+            "forskrift",
+        ],
+    )
+
+
+def focused_review_text(value: str | None, stop_terms: list[str]) -> str:
+    if not value:
+        return ""
+    selected: list[str] = []
+    for line in str(value).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        simplified = simplify(stripped)
+        if selected and any(simplified.startswith(simplify(term)) for term in stop_terms):
+            break
+        selected.append(stripped)
+    return "\n".join(selected)[:2_000]
 
 
 def combine_value_unit(value: str | None, unit: str | None) -> str:

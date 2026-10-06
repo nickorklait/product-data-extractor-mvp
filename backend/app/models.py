@@ -116,6 +116,7 @@ class IPDAttributeRow(BaseModel):
     attribute_description: Optional[str] = None
     data: Optional[str] = None
     uom: Optional[str] = None
+    full_text: Optional[str] = None
     comments: Optional[str] = None
     source_reference: Optional[str] = None
     source_excerpt: Optional[str] = None

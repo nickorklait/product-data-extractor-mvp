@@ -453,15 +453,22 @@ h1 {
 .review-table th:nth-child(3) { width: 190px; }
 .review-table th:nth-child(4) { width: 160px; }
 .review-table th:nth-child(5) { width: 90px; }
-.review-table th:nth-child(6) { width: 270px; }
-.review-table th:nth-child(7) { width: 82px; }
+.review-table th:nth-child(6) { width: 260px; }
+.review-table th:nth-child(7) { width: 270px; }
+.review-table th:nth-child(8) { width: 82px; }
 
-.review-table td > input:not([type="checkbox"]) {
+.review-table td > input:not([type="checkbox"]),
+.review-table td > textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid #cbd5db;
   border-radius: 5px;
   padding: 7px 8px;
+  font: inherit;
+}
+
+.review-table td > textarea {
+  resize: vertical;
 }
 
 .review-table td small,

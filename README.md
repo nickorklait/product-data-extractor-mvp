@@ -129,7 +129,7 @@ The app also supports output profiles. Roller-fabric forms are detected automati
 
 For local port conflicts, set `VITE_BACKEND_TARGET` in `frontend/.env.local`. The normal default remains `http://127.0.0.1:8000`.
 
-Select **Phase 1 comparison** to export every successfully extracted document to one organized workbook. `Comparison` places documents in rows and all 52 requested attributes in columns. `Completeness` shows a color-coded Found/Missing matrix, and `Missing_Attributes` provides a filterable gap list. `Phase1_Found` contains populated values, while `Phase1_Detail` retains every requested attribute with source evidence and review status. Generic captures, warnings, and raw OCR remain in separate review sheets.
+Select **Phase 1 comparison** to export every successfully extracted document to one organized workbook. `Comparison` places documents in rows and all 52 requested attributes in columns. Measurable fields use separate value and UoM columns; shelf life and storage also retain the complete supplier wording in adjacent `Full text` columns. The `Overview` sheet separates shelf-life value/UoM and storage-temperature min/max/UoM for quick comparison. Missing cells are explicitly marked `Not found`. `Completeness` shows a color-coded Found/Missing matrix, and `Missing_Attributes` provides a filterable gap list. `Phase1_Found` contains populated values, while `Phase1_Detail` retains every requested attribute with full text, source evidence, and review status. Generic captures, warnings, and raw OCR remain in separate review sheets.
 
 Image-based allergen declarations receive a second table-oriented OCR pass. Yes/No values and declared quantities are mapped to dedicated fields and color-coded in Excel. A declaration that is detected without readable statuses is flagged for manual review rather than treated as allergen-free.
 
@@ -137,7 +137,7 @@ Physical, chemical, typical-value, and microbiological specification tables are 
 
 GNT Exberry specifications are recognized as a reusable supplier-family template. Their manufacturing, colouring, physical/chemical, microbiological, general appearance, nutrition, and shelf-life tables are captured consistently across product colours. Common OCR unit substitutions are normalized but remain marked for review when the source image is ambiguous.
 
-The browser exposes the complete 52-attribute Phase 1 worklist across Allergens, Diet, Religious, Nutrient, and General groups. It shows found, missing, and approved counts; sorts unresolved fields for review; allows direct value/unit edits and row approval; and records those actions in the exported `Change_Log` sheet. Source evidence identifies the PDF page or embedded Word image and includes the extracted source line.
+The browser exposes the complete 52-attribute Phase 1 worklist across Allergens, Diet, Religious, Nutrient, and General groups. It shows found, missing, and approved counts; sorts unresolved fields for review; allows direct value, unit, and full-text edits plus row approval; and records those actions in the exported `Change_Log` sheet. Source evidence identifies the PDF page or embedded Word image and includes the extracted source line.
 
 Select **Document sheets** to retain the previous batch layout: one workbook with a `Batch_Index` sheet and one customer-shaped data sheet per successfully extracted document. Mixed output profiles can be included in the same batch.
 
