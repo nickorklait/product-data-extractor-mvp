@@ -2,6 +2,8 @@
 
 A full-stack customer-facing MVP for uploading PDF/DOCX product specification documents, extracting structured product data with deterministic rules, reviewing the result in the browser, and exporting to Excel.
 
+For a controlled customer test, follow [SECURE_PILOT.md](SECURE_PILOT.md). Use the authenticated Databricks App URL, not a public tunnel to the local server.
+
 This MVP uses deterministic extraction. It is designed for transparent review. AI extraction can be added later after security approval.
 
 ## Stack

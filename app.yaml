@@ -6,3 +6,5 @@ env:
     value: databricks
   - name: PRODUCT_DATA_VOLUME_PATH
     valueFrom: volume
+  - name: PRODUCT_DATA_MAX_UPLOAD_MB
+    value: "25"
