@@ -182,8 +182,8 @@ def export_ipd_consolidated(results: list[ExtractionResult]) -> StreamingRespons
         LOGGER.exception("Consolidated IPD export failed")
         raise HTTPException(status_code=500, detail="Consolidated Excel export failed. Please try again.") from exc
 
-    _archive_excel(excel_file.getvalue(), "snacks-phase1-comparison.xlsx")
-    headers = {"Content-Disposition": 'attachment; filename="snacks-phase1-comparison.xlsx"'}
+    _archive_excel(excel_file.getvalue(), "product-data-comparison.xlsx")
+    headers = {"Content-Disposition": 'attachment; filename="product-data-comparison.xlsx"'}
     return StreamingResponse(
         excel_file,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

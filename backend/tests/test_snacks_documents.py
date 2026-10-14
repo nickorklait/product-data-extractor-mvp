@@ -1,10 +1,66 @@
 import unittest
 
-from backend.app.excel import populate_ipd_rows
+from openpyxl import load_workbook
+
+from backend.app.excel import create_ipd_consolidated_excel, populate_ipd_rows
+from backend.app.finished_goods import FINISHED_GOOD_FIELDS, FINISHED_GOOD_PROFILE
 from backend.app.parser import extract_structured_data
 
 
 class SnacksDocumentTests(unittest.TestCase):
+    def test_finished_good_schema_exports_one_product_per_row(self) -> None:
+        text = """
+Produkt | KiMs Test Chips
+Nettovekt | 160 g
+Materialnummer ferdigvare | 5958000001
+Allergener | Melk
+Claims | 40 % mindre fett
+Flushing | Ja
+Pakkegass | Nitrogen
+Restoksygen | < 3,5 %
+Materialnummer folie | 5928012509
+EAN-kode kartong (D-pack) | 7039318018349
+Antall poser per kartong | 25
+Datomerking pose | PD + 180 dager
+NÆRINGSINNHOLD Per 100 g
+Energi (kJ/kcal) 1957/467
+Fett 18 g
+hvorav mettede fettsyrer 1,6 g
+Karbohydrater 68 g
+Protein 5,6 g
+Salt 2,3 g
+Jern | 4.2 mg | 1.3 mg | 10 %
+"""
+
+        result = extract_structured_data(text, "finished-good.docx")
+        fields = {field.label: field for field in result.dynamic_fields}
+
+        self.assertEqual(result.output_profile, FINISHED_GOOD_PROFILE)
+        self.assertEqual(len(result.dynamic_fields), len(FINISHED_GOOD_FIELDS))
+        self.assertEqual(fields["Produkt"].value, "KiMs Test Chips")
+        self.assertEqual(fields["Pakkegass"].value, "Nitrogen")
+        self.assertEqual(fields["Energi (kJ)"].value, "1957")
+        self.assertEqual(fields["Energi (kJ)"].unit, "kJ")
+        self.assertEqual(fields["Jern"].value, "4.2")
+        self.assertEqual(fields["Jern"].unit, "mg")
+        self.assertIsNone(fields["Magnesium"].value)
+
+        workbook = load_workbook(create_ipd_consolidated_excel([result]), data_only=True)
+        self.assertEqual(workbook.sheetnames[0], "Finished_Goods")
+        sheet = workbook["Finished_Goods"]
+        headers = {cell.value: cell.column for cell in sheet[1]}
+        self.assertEqual(sheet.cell(2, headers["Produkt"]).value, "KiMs Test Chips")
+        self.assertEqual(sheet.cell(2, headers["Energi (kJ)"]).value, 1957)
+        self.assertEqual(sheet.cell(2, headers["Energi (kJ) UoM"]).value, "kJ")
+        self.assertEqual(sheet.cell(2, headers["Jern"]).value, 4.2)
+        self.assertEqual(sheet.cell(2, headers["Jern UoM"]).value, "mg")
+        status_sheet = workbook["Finished_Goods_Status"]
+        status_headers = {cell.value: cell.column for cell in status_sheet[1]}
+        self.assertEqual(status_sheet.cell(2, status_headers["Jern"]).value, "Found")
+        self.assertEqual(status_sheet.cell(2, status_headers["Magnesium"]).value, "Missing")
+        self.assertEqual(workbook["Finished_Goods_Evidence"].max_row, len(FINISHED_GOOD_FIELDS) + 1)
+        workbook.close()
+
     def test_pipe_nutrition_and_named_allergens_are_mapped(self) -> None:
         text = """
 Produkt | Anyday Dry Roasted Nut Mix

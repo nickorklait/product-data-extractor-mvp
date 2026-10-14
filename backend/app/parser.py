@@ -12,6 +12,7 @@ from docx import Document
 from openpyxl import load_workbook
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
+from .finished_goods import FINISHED_GOOD_FIELDS, FINISHED_GOOD_PROFILE
 from .models import (
     Allergens,
     DocumentMetadata,
@@ -732,6 +733,9 @@ def extract_structured_data(text: str, source_file: str, parser_warnings: Option
     review_flags = build_review_flags(nutrition, key_value_candidates)
     dynamic_fields = build_dynamic_fields(text, source_file)
 
+    if output_profile == FINISHED_GOOD_PROFILE:
+        enrich_finished_good_fields(dynamic_fields, metadata, nutrition, allergens)
+
     if output_profile in {"roller_fabric", "filament_spec"}:
         dynamic_values = {field.field_name: field.value for field in dynamic_fields if field.value}
         metadata.product_name = dynamic_values.get("ohc_article_name") or metadata.product_name
@@ -1105,7 +1109,16 @@ def get_nested(result: ExtractionResult, dotted_path: str) -> Optional[str]:
 
 def build_warnings(result: ExtractionResult) -> list[str]:
     warnings: list[str] = []
-    if result.output_profile == "food_ipd":
+    if result.output_profile == FINISHED_GOOD_PROFILE:
+        important = {"product", "net_weight", "allergens", "energy_kj", "protein", "salt"}
+        found = {field.field_name for field in result.dynamic_fields if field.value}
+        labels = {field_name: label for field_name, label, *_rest in FINISHED_GOOD_FIELDS}
+        for field_name in sorted(important - found):
+            warnings.append(f"Important finished-good field '{labels[field_name]}' was not found.")
+        flagged = [field.label for field in result.dynamic_fields if field.needs_review]
+        if flagged:
+            warnings.append(f"Finished-good OCR values need review: {', '.join(flagged[:12])}.")
+    elif result.output_profile == "food_ipd":
         warnings.extend(message for path, message in IMPORTANT_FIELDS.items() if not get_nested(result, path))
     elif result.output_profile == "roller_fabric":
         important = {"ohc_article_no", "ohc_article_name", "supplier_name", "fabric_construction"}
@@ -1504,6 +1517,21 @@ def detect_output_profile(text: str, source_file: str) -> str:
         return "filament_spec"
     if has_any(text, ["article specification of roller fabric"]) or has_any(source_file, ["anlon", "roller fabric"]):
         return "roller_fabric"
+    finished_good_markers = [
+        "materialnummer ferdigvare",
+        "datomerking pose",
+        "materialnummer folie",
+        "pakkegass",
+        "flushing",
+        "restoksygen",
+        "nettovekt pose",
+        "materialnummer kartong",
+        "antall poser per kartong",
+        "ean-kode kartong",
+        "vekt f-pack",
+    ]
+    if sum(has_any(text, [marker]) for marker in finished_good_markers) >= 3:
+        return FINISHED_GOOD_PROFILE
     if has_any(
         text,
         ["nutrition", "naeringsinnhold", "allergen", "allergener", "shelf life", "holdbarhet"],
@@ -1516,6 +1544,8 @@ def build_dynamic_fields(text: str, source_file: str) -> list[DynamicField]:
     profile = detect_output_profile(text, source_file)
     if profile == "filament_spec":
         return build_filament_dynamic_fields(text, source_file)
+    if profile == FINISHED_GOOD_PROFILE:
+        return build_finished_good_fields(text)
     if profile == "generic":
         return build_generic_dynamic_fields(text)
 
@@ -1567,6 +1597,81 @@ def build_dynamic_fields(text: str, source_file: str) -> list[DynamicField]:
             product_field.needs_review = False
         validate_roller_fabric_fields(fields)
     return fields
+
+
+def build_finished_good_fields(text: str) -> list[DynamicField]:
+    raw_lines = build_raw_lines(text)
+    fields: list[DynamicField] = []
+    for field_name, label, section, aliases, unit in FINISHED_GOOD_FIELDS:
+        value, source = find_exact_labeled_value(raw_lines, aliases)
+        fields.append(
+            DynamicField(
+                field_name=field_name,
+                label=label,
+                section=section,
+                value=value,
+                unit=unit,
+                source=source,
+                needs_review=bool(value and source and "image" in searchable(source)),
+            )
+        )
+    return fields
+
+
+def find_exact_labeled_value(raw_lines: list[RawLine], aliases: list[str]) -> tuple[Optional[str], Optional[str]]:
+    alias_keys = {searchable(alias).strip() for alias in aliases}
+    for raw_line in raw_lines:
+        cells = [cell.strip() for cell in re.split(r"\s*\|\s*", raw_line.text, maxsplit=1)]
+        if len(cells) < 2:
+            colon_match = re.match(r"^(.{2,80}?)\s*:\s*(.+)$", raw_line.text)
+            if not colon_match:
+                continue
+            cells = [colon_match.group(1), colon_match.group(2)]
+        if searchable(cells[0]).strip(" .:-") not in alias_keys:
+            continue
+        value = clean_value(cells[1])
+        if value:
+            source = raw_line.source_reference or f"Extracted line {raw_line.line_number}"
+            return value, source
+    return None, None
+
+
+def enrich_finished_good_fields(
+    fields: list[DynamicField],
+    metadata: DocumentMetadata,
+    nutrition: Nutrition,
+    allergens: Allergens,
+) -> None:
+    by_name = {field.field_name: field for field in fields}
+    structured_values = {
+        "product": metadata.product_name,
+        "allergens": allergens.allergen_statement,
+        "energy_kcal": nutrition.energy_kcal,
+        "energy_kj": nutrition.energy_kj,
+        "fat": nutrition.fat_g,
+        "saturated_fat": nutrition.saturated_fat_g,
+        "carbohydrates": nutrition.carbohydrate_g,
+        "sugars": nutrition.sugars_g,
+        "fibre": nutrition.fibre_g,
+        "protein": nutrition.protein_g,
+        "salt": nutrition.salt_g,
+    }
+    for field_name, value in structured_values.items():
+        if not value or field_name not in by_name:
+            continue
+        field = by_name[field_name]
+        field.value = value
+        field.source = "Structured deterministic extraction"
+        field.needs_review = False
+
+    for field_name in ["iron", "magnesium"]:
+        field = by_name.get(field_name)
+        if not field or not field.value:
+            continue
+        measure = re.search(r"([<>]?\s*\d+(?:[,.]\d+)?)\s*(mg|g)\b", field.value, flags=re.IGNORECASE)
+        if measure:
+            field.value = clean_value(measure.group(1))
+            field.unit = measure.group(2)
 
 
 def build_generic_dynamic_fields(text: str) -> list[DynamicField]:

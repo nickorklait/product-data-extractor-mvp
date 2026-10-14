@@ -10,6 +10,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .finished_goods import FINISHED_GOOD_FIELDS, FINISHED_GOOD_PROFILE
 from .models import ExtractionResult, IPDAttributeRow
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -39,11 +40,12 @@ def create_excel(result: ExtractionResult) -> BytesIO:
     output = BytesIO()
     data = result.model_dump()
 
-    first_sheet = (
-        {"Phase1_Attributes": build_ipd_template_rows(result)}
-        if result.output_profile in {"food_ipd", "gnt_exberry"}
-        else {"Extracted_Data": normalize_rows(data.get("dynamic_fields", []))}
-    )
+    if result.output_profile in {"food_ipd", "gnt_exberry"}:
+        first_sheet = {"Phase1_Attributes": build_ipd_template_rows(result)}
+    elif result.output_profile == FINISHED_GOOD_PROFILE:
+        first_sheet = {"Finished_Good": [build_finished_good_row(result)]}
+    else:
+        first_sheet = {"Extracted_Data": normalize_rows(data.get("dynamic_fields", []))}
     sheets: dict[str, list[dict[str, Any]]] = {
         **first_sheet,
         "Summary": flatten_section(data["metadata"]),
@@ -109,6 +111,9 @@ def create_batch_excel(results: list[ExtractionResult]) -> BytesIO:
 def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
     """Create the Snacks Phase 1 comparison workbook with review evidence."""
     workbook = Workbook()
+    finished_good_rows: list[dict[str, Any]] = []
+    finished_good_completeness_rows: list[dict[str, Any]] = []
+    finished_good_evidence_rows: list[dict[str, Any]] = []
     comparison_rows: list[dict[str, Any]] = []
     completeness_rows: list[dict[str, Any]] = []
     missing_rows: list[dict[str, Any]] = []
@@ -128,6 +133,11 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
 
     for result in results:
         metadata = result.metadata
+        is_finished_good = result.output_profile == FINISHED_GOOD_PROFILE
+        if is_finished_good:
+            finished_good_rows.append(build_finished_good_row(result))
+            finished_good_completeness_rows.append(build_finished_good_completeness_row(result))
+            finished_good_evidence_rows.extend(build_finished_good_evidence_rows(result))
         common = {
             "Source file": metadata.source_file or "",
             "Product name": metadata.product_name or "",
@@ -151,7 +161,7 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
             "Molluscs": result.allergens.molluscs or "",
         }
         captured_allergens = sum(bool(value) for value in allergen_data.values())
-        document_ipd_rows = build_ipd_template_rows(result)
+        document_ipd_rows = [] if is_finished_good else build_ipd_template_rows(result)
         found_count = sum(bool(row.get("Data")) for row in document_ipd_rows)
         approved_count = sum(str(row.get("Approved", "")).casefold() in {"yes", "true"} for row in document_ipd_rows)
         declared_allergens = [
@@ -184,7 +194,7 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
             if phase1_has_full_text_column(group, attribute):
                 comparison_row[f"{heading} | Full text"] = full_text or "Not found"
             completeness_row[heading] = "Found" if data_value else "Missing"
-            if not data_value:
+            if not data_value and not is_finished_good:
                 missing_rows.append(
                     {
                         **common,
@@ -194,8 +204,9 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
                         "Status": "Missing",
                     }
                 )
-        comparison_rows.append(comparison_row)
-        completeness_rows.append(completeness_row)
+        if not is_finished_good:
+            comparison_rows.append(comparison_row)
+            completeness_rows.append(completeness_row)
 
         overview_rows.append(
             {
@@ -299,7 +310,12 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
         for entry in result.change_log:
             change_rows.append({**common, **entry.model_dump()})
 
-    sheets = {
+    sheets: dict[str, list[dict[str, Any]]] = {}
+    if finished_good_rows:
+        sheets["Finished_Goods"] = finished_good_rows
+        sheets["Finished_Goods_Status"] = finished_good_completeness_rows
+        sheets["Finished_Goods_Evidence"] = finished_good_evidence_rows
+    sheets.update({
         "Comparison": comparison_rows,
         "Completeness": completeness_rows,
         "Missing_Attributes": missing_rows,
@@ -312,7 +328,7 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
         "Warnings": warning_rows,
         "Change_Log": change_rows,
         "Raw_Review": raw_rows,
-    }
+    })
     for index, (sheet_name, rows) in enumerate(sheets.items()):
         worksheet = workbook.active if index == 0 else workbook.create_sheet()
         worksheet.title = sheet_name
@@ -322,6 +338,11 @@ def create_ipd_consolidated_excel(results: list[ExtractionResult]) -> BytesIO:
 
     workbook["Comparison"].freeze_panes = "H2"
     workbook["Completeness"].freeze_panes = "H2"
+    if "Finished_Goods" in workbook.sheetnames:
+        workbook["Finished_Goods"].freeze_panes = "B2"
+        workbook["Finished_Goods_Status"].freeze_panes = "B2"
+        format_finished_good_matrix(workbook["Finished_Goods"], status_matrix=False)
+        format_finished_good_matrix(workbook["Finished_Goods_Status"], status_matrix=True)
     comparison_definitions = [
         (group, column)
         for group, attribute in phase1_definitions
@@ -345,6 +366,56 @@ def chunk_excel_text(value: str) -> list[str]:
     if not value:
         return []
     return [value[start:start + EXCEL_CELL_LIMIT] for start in range(0, len(value), EXCEL_CELL_LIMIT)]
+
+
+def build_finished_good_row(result: ExtractionResult) -> dict[str, Any]:
+    fields = {field.field_name: field for field in result.dynamic_fields}
+    row: dict[str, Any] = {"Source file": result.metadata.source_file or ""}
+    for field_name, label, _section, _aliases, default_unit in FINISHED_GOOD_FIELDS:
+        field = fields.get(field_name)
+        value = str(field.value or "").strip() if field else ""
+        unit = str(field.unit or default_unit or "").strip() if field else str(default_unit or "")
+        row[label] = comparison_cell_value(value, "") if value else "Not found"
+        if default_unit:
+            row[f"{label} UoM"] = unit or "Not found"
+    return row
+
+
+def build_finished_good_completeness_row(result: ExtractionResult) -> dict[str, Any]:
+    fields = {field.field_name: field for field in result.dynamic_fields}
+    row: dict[str, Any] = {"Source file": result.metadata.source_file or ""}
+    for field_name, label, _section, _aliases, _default_unit in FINISHED_GOOD_FIELDS:
+        row[label] = "Found" if fields.get(field_name) and fields[field_name].value else "Missing"
+    return row
+
+
+def build_finished_good_evidence_rows(result: ExtractionResult) -> list[dict[str, Any]]:
+    return [
+        {
+            "Source file": result.metadata.source_file or "",
+            "Product": result.metadata.product_name or "",
+            "Section": field.section or "",
+            "Attribute": field.label,
+            "Value": field.value or "Not found",
+            "UoM": field.unit or "",
+            "Source": field.source or "Not provided in document",
+            "Needs review": "Yes" if field.needs_review else "",
+        }
+        for field in result.dynamic_fields
+    ]
+
+
+def format_finished_good_matrix(worksheet, status_matrix: bool) -> None:
+    found_fill = PatternFill("solid", fgColor="DCEFE5")
+    missing_fill = PatternFill("solid", fgColor="F8D7DA")
+    for column in range(2, worksheet.max_column + 1):
+        worksheet.column_dimensions[get_column_letter(column)].width = 20
+        for row in range(2, worksheet.max_row + 1):
+            cell = worksheet.cell(row, column)
+            if status_matrix:
+                cell.fill = found_fill if cell.value == "Found" else missing_fill
+            elif cell.value == "Not found":
+                cell.fill = missing_fill
 
 
 def format_allergen_sheet(worksheet) -> None:
@@ -590,7 +661,7 @@ def build_ipd_template_rows(result: ExtractionResult) -> list[dict[str, Any]]:
 
 
 def populate_ipd_rows(result: ExtractionResult) -> ExtractionResult:
-    if result.ipd_rows:
+    if result.ipd_rows or result.output_profile == FINISHED_GOOD_PROFILE:
         return result
     result.ipd_rows = [
         IPDAttributeRow(

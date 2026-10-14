@@ -179,7 +179,7 @@ function App() {
       const link = document.createElement('a');
       link.href = url;
       link.download = isConsolidated
-        ? 'snacks-phase1-comparison.xlsx'
+        ? 'product-data-comparison.xlsx'
         : (isBatch
           ? 'product-data-batch.xlsx'
           : `${exportPayloads[0].metadata?.product_name || 'product-data-extraction'}.xlsx`);
@@ -213,7 +213,7 @@ function App() {
             className={excelLayout === 'ipd-consolidated' ? 'active' : ''}
             onClick={() => setExcelLayout('ipd-consolidated')}
           >
-            Phase 1 comparison
+            Comparison workbook
           </button>
           <button
             type="button"
@@ -392,7 +392,9 @@ function ResultsDashboard({
         </div>
         <p>
           {excelLayout === 'ipd-consolidated'
-            ? 'All documents will be exported side by side against the customer\'s Phase 1 attributes, with values, completeness, missing fields, evidence, approvals, and change history.'
+            ? (result.output_profile === 'finished_good_snacks'
+              ? 'Finished-good documents will be exported one product per row against the customer\'s product, packing, logistics, nutrition, and mineral attributes.'
+              : 'Raw-material documents will be exported side by side against the customer\'s Phase 1 attributes, with values, completeness, missing fields, evidence, approvals, and change history.')
             : profileDescription(result.output_profile)}
         </p>
       </section>
@@ -1033,6 +1035,7 @@ function profileLabel(profile) {
   if (profile === 'filament_spec') return 'Filament specification';
   if (profile === 'food_ipd') return 'Snacks Phase 1 attributes';
   if (profile === 'gnt_exberry') return 'GNT Exberry specification template';
+  if (profile === 'finished_good_snacks') return 'Snacks finished-good attributes';
   return 'Flexible extracted data workbook';
 }
 
@@ -1048,6 +1051,9 @@ function profileDescription(profile) {
   }
   if (profile === 'gnt_exberry') {
     return 'Recognized GNT Exberry tables are captured as structured specification rows and mapped into the Phase 1 workbook where fields match.';
+  }
+  if (profile === 'finished_good_snacks') {
+    return 'Export uses the customer\'s finished-good schema for product, packing, logistics, nutrition, iron, and magnesium, with missing values retained for comparison.';
   }
   return 'No known schema was detected. Export preserves dynamic fields, selected candidates, and raw source lines.';
 }
