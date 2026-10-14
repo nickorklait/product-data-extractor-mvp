@@ -459,6 +459,82 @@ def extract_allergen_statuses(text: str) -> dict[str, str]:
     return values
 
 
+def extract_allergen_declaration(text: str) -> Optional[str]:
+    for line in text.splitlines():
+        match = re.match(r"\s*(?:allergens?|allergener)\s*(?:\||:|-)\s*(.+?)\s*$", line, flags=re.IGNORECASE)
+        if match:
+            return clean_value(match.group(1))
+    return None
+
+
+def extract_may_contain_clause(declaration: Optional[str]) -> Optional[str]:
+    if not declaration:
+        return None
+    match = re.search(
+        r"\b(?:may contain|kan inneholde|spor av)\b.+?(?:[.;]|$)",
+        declaration,
+        flags=re.IGNORECASE,
+    )
+    return clean_value(match.group(0)) if match else None
+
+
+def extract_allergen_declaration_statuses(declaration: str) -> dict[str, str]:
+    declaration_key = searchable(declaration)
+    field_aliases = {
+        "gluten": ["gluten", "hvete", "wheat", "rug", "rye", "bygg", "barley", "havre", "oats"],
+        "crustaceans": ["crustacean", "skalldyr"],
+        "eggs": ["egg", "eggs"],
+        "fish": ["fish", "fisk"],
+        "peanuts": ["peanut", "peanuts", "peanott", "peanotter"],
+        "soybeans": ["soy", "soya", "soybean"],
+        "milk": ["milk", "melk"],
+        "celery": ["celery", "selleri"],
+        "mustard": ["mustard", "sennep"],
+        "sesame": ["sesame", "sesam"],
+        "sulphites": ["sulphite", "sulfitt", "svoveldioksid", "so2"],
+        "lupin": ["lupin"],
+        "molluscs": ["mollusc", "blotdyr"],
+    }
+    tree_nut_aliases = [
+        "nuts",
+        "notter",
+        "cashew",
+        "cashewnott",
+        "almond",
+        "mandel",
+        "hazelnut",
+        "hasselnott",
+        "walnut",
+        "valnott",
+        "pecan",
+        "pistachio",
+        "pistasj",
+    ]
+    all_fields = [*field_aliases, "nuts"]
+    if has_any(declaration, ["no allergens", "ingen allergener", "allergenfri"]):
+        return {field: "No" for field in all_fields}
+
+    trace_start = re.search(r"\b(?:may contain|kan inneholde|spor av)\b", declaration_key)
+    direct_text = declaration_key[: trace_start.start()] if trace_start else declaration_key
+    trace_text = declaration_key[trace_start.start() :] if trace_start else ""
+    values: dict[str, str] = {}
+    for field, aliases in field_aliases.items():
+        if any(searchable(alias) in direct_text for alias in aliases):
+            values[field] = "Yes"
+        elif any(searchable(alias) in trace_text for alias in aliases):
+            values[field] = "Traces"
+
+    direct_tree_text = re.sub(r"\b(?:peanuts?|peanotter?)\b", "", direct_text)
+    trace_tree_text = re.sub(r"\b(?:peanuts?|peanotter?)\b", "", trace_text)
+    direct_tree_nuts = any(searchable(alias) in direct_tree_text for alias in tree_nut_aliases)
+    trace_tree_nuts = any(searchable(alias) in trace_tree_text for alias in tree_nut_aliases)
+    if direct_tree_nuts:
+        values["nuts"] = "Yes"
+    elif trace_tree_nuts:
+        values["nuts"] = "Traces"
+    return values
+
+
 def configure_tesseract_path(pytesseract_module) -> None:
     if shutil.which("tesseract"):
         return
@@ -537,11 +613,7 @@ def extract_structured_data(text: str, source_file: str, parser_warnings: Option
         ["shelf life", "holdbarhet", "best before", "expiry", "durability"],
         ["storage", "oppbevaring", "physical", "fysisk", "allergen", "nutrition", "naeringsinnhold"],
     )
-    storage_section = find_section(
-        text,
-        ["storage", "oppbevaring", "lagring", "store", "temperature"],
-        ["physical", "fysisk", "chemical", "kjemisk", "allergen", "nutrition", "naeringsinnhold"],
-    )
+    storage_section = extract_storage_section(text)
     physical_section = find_section(
         text,
         ["physical", "chemical", "fysisk", "kjemisk", "moisture", "water content", "pH", "density", "particle size"],
@@ -550,29 +622,42 @@ def extract_structured_data(text: str, source_file: str, parser_warnings: Option
 
     nutrition_source = nutrition_section or text
     vertical_nutrition = extract_vertical_nutrition(nutrition_source)
+    has_nutrition_table = bool(vertical_nutrition)
     nutrition = Nutrition(
         energy_kj=find_specification_numeric_value(specification_rows, ["energy"], "kj")
-        or find_energy_value(nutrition_source, "kj") or vertical_nutrition.get("energy_kj"),
+        or vertical_nutrition.get("energy_kj")
+        or (None if has_nutrition_table else find_energy_value(nutrition_source, "kj")),
         energy_kcal=find_specification_numeric_value(specification_rows, ["energy"], "kcal")
-        or find_energy_value(nutrition_source, "kcal") or vertical_nutrition.get("energy_kcal"),
+        or vertical_nutrition.get("energy_kcal")
+        or (None if has_nutrition_table else find_energy_value(nutrition_source, "kcal")),
         fat_g=find_specification_numeric_value(specification_rows, ["fat"])
-        or find_nutrition_value(nutrition_source, [r"fat", r"fett"], ["g"]) or vertical_nutrition.get("fat_g"),
+        or vertical_nutrition.get("fat_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"fat", r"fett"], ["g"])),
         saturated_fat_g=find_specification_numeric_value(specification_rows, ["of which saturates", "saturated fat"])
-        or find_nutrition_value(nutrition_source, [r"saturated fat", r"mettede fettsyrer", r"mettet fett"], ["g"]) or vertical_nutrition.get("saturated_fat_g"),
+        or vertical_nutrition.get("saturated_fat_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"saturated fat", r"mettede fettsyrer", r"mettet fett"], ["g"])),
         carbohydrate_g=find_specification_numeric_value(specification_rows, ["carbohydrate"])
-        or find_nutrition_value(nutrition_source, [r"carbohydrate", r"karbohydrat"], ["g"]) or vertical_nutrition.get("carbohydrate_g"),
+        or vertical_nutrition.get("carbohydrate_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"carbohydrate", r"karbohydrat"], ["g"])),
         sugars_g=find_specification_numeric_value(specification_rows, ["of which sugars", "sugars"])
-        or find_nutrition_value(nutrition_source, [r"sugars?", r"sukkerarter", r"sukker"], ["g"]) or vertical_nutrition.get("sugars_g"),
+        or vertical_nutrition.get("sugars_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"sugars?", r"sukkerarter", r"sukker"], ["g"])),
         fibre_g=find_specification_numeric_value(specification_rows, ["fibre", "fiber"])
-        or find_nutrition_value(nutrition_source, [r"fibre", r"fiber", r"kostfiber"], ["g"]) or vertical_nutrition.get("fibre_g"),
+        or vertical_nutrition.get("fibre_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"fibre", r"fiber", r"kostfiber"], ["g"])),
         protein_g=find_specification_numeric_value(specification_rows, ["protein"])
-        or find_nutrition_value(nutrition_source, [r"protein"], ["g"]) or vertical_nutrition.get("protein_g"),
+        or vertical_nutrition.get("protein_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"protein"], ["g"])),
         salt_g=find_specification_numeric_value(specification_rows, ["salt"])
-        or find_nutrition_value(nutrition_source, [r"salt"], ["g"]) or vertical_nutrition.get("salt_g"),
+        or vertical_nutrition.get("salt_g")
+        or (None if has_nutrition_table else find_nutrition_value(nutrition_source, [r"salt"], ["g"])),
     )
 
     allergen_source = allergens_section or text
     allergen_statuses = extract_allergen_statuses(text)
+    allergen_declaration = extract_allergen_declaration(text)
+    if not allergen_statuses and allergen_declaration:
+        allergen_statuses = extract_allergen_declaration_statuses(allergen_declaration)
     status_statement = "; ".join(
         f"{field_name.replace('_', ' ').title()}: {value}"
         for field_name, value in allergen_statuses.items()
@@ -589,13 +674,15 @@ def extract_structured_data(text: str, source_file: str, parser_warnings: Option
     ]
     allergens = Allergens(
         allergens_contains=", ".join(contains_values) or None if allergen_statuses else find_labeled_text(allergen_source, ["contains", "inneholder"], max_lines=3),
-        allergens_may_contain=", ".join(trace_values) or None if allergen_statuses else find_labeled_text(allergen_source, ["may contain", "spor av", "kan inneholde"], max_lines=3),
-        allergen_statement=status_statement or (clean_excerpt(allergen_source, 700) if has_any(allergen_source, ["allergen", "allergener", "contains", "spor av"]) else None),
+        allergens_may_contain=", ".join(trace_values)
+        or extract_may_contain_clause(allergen_declaration)
+        or (None if allergen_statuses else find_labeled_text(allergen_source, ["may contain", "spor av", "kan inneholde"], max_lines=3)),
+        allergen_statement=allergen_declaration or status_statement or (clean_excerpt(allergen_source, 700) if has_any(allergen_source, ["allergen", "allergener", "contains", "spor av"]) else None),
         **allergen_statuses,
     )
 
-    shelf_life_text = clean_excerpt(shelf_life_section, 500) if shelf_life_section else None
     shelf_value, shelf_unit = extract_shelf_life_value(shelf_life_section or normalized)
+    shelf_life_text = extract_shelf_life_text(shelf_life_section or text) if shelf_value else None
     shelf_life = ShelfLife(
         shelf_life_value=shelf_value,
         shelf_life_unit=shelf_unit,
@@ -603,7 +690,7 @@ def extract_structured_data(text: str, source_file: str, parser_warnings: Option
     )
 
     storage = Storage(
-        storage_temperature=find_temperature(storage_section or text),
+        storage_temperature=find_temperature(storage_section),
         storage_text=clean_excerpt(storage_section, 500) if storage_section else None,
     )
 
@@ -796,6 +883,35 @@ def find_section(text: str, start_keywords: list[str], stop_keywords: list[str])
     return "\n".join(lines[start_index:end_index]).strip() or None
 
 
+def extract_storage_section(text: str) -> Optional[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    candidates: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        line_key = searchable(line)
+        if not has_any(line, ["oppbevaring", "lagringsforhold", "storage", "store at", "store in", "kjolevare"]):
+            continue
+        score = 1
+        if re.search(r"(?:oppbevaring|lagringsforhold|storage)\s*[:|]", line_key):
+            score += 3
+        if has_any(line, ["oppbevares", "romtemperatur", "room temperature", "store at", "store in"]):
+            score += 4
+        if re.search(r"\d+(?:[,.]\d+)?\s*(?:deg\s*c|c)\b", line_key):
+            score += 2
+        candidates.append((score, index))
+    if not candidates:
+        return None
+
+    _, start_index = max(candidates, key=lambda candidate: (candidate[0], candidate[1]))
+    selected = [lines[start_index]]
+    for line in lines[start_index + 1 : start_index + 4]:
+        if re.match(r"word/media/", searchable(line)):
+            break
+        if has_any(line, ["nutrition", "naeringsinnhold", "allergen", "physical", "fysisk", "shelf life", "holdbarhet"]):
+            break
+        selected.append(line)
+    return "\n".join(selected)
+
+
 def find_nutrition_value(text: str, labels: list[str], units: list[str]) -> Optional[str]:
     label_pattern = "|".join(labels)
     unit_pattern = "|".join(re.escape(unit) for unit in units)
@@ -819,47 +935,58 @@ def find_energy_value(text: str, unit: str) -> Optional[str]:
 
 def extract_vertical_nutrition(text: str) -> dict[str, str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not any(has_any(line, ["nutrition", "naeringsinnhold"]) for line in lines):
+    header_index = next(
+        (index for index, line in enumerate(lines) if has_any(line, ["nutrition", "naeringsinnhold"])),
+        None,
+    )
+    if header_index is None:
         return {}
 
-    value_lines: list[str] = []
-    after_serving_header = False
-    for line in lines:
-        searchable_line = searchable(line)
-        if re.search(r"\bpr\.?\s*100\b|\bper\s*100\b", searchable_line):
-            after_serving_header = True
-            continue
-        if after_serving_header:
-            if has_any(line, ["typiske verdier", "sensoriske", "physical", "allergen"]):
-                break
-            if re.search(r"\d", line):
-                value_lines.append(clean_value(line))
-
-    if not value_lines:
-        return {}
-
+    table_lines = lines[header_index : header_index + 24]
     values: dict[str, str] = {}
-    energy_line = next((line for line in value_lines if has_any(line, ["kj", "kcal"])), None)
-    if energy_line:
-        kj = find_energy_value(energy_line, "kj")
-        kcal = find_energy_value(energy_line, "kcal")
-        if kj:
-            values["energy_kj"] = kj
-        if kcal:
-            values["energy_kcal"] = kcal
-        value_lines = [line for line in value_lines if line != energy_line]
-
-    ordered_fields = [
-        "protein_g",
-        "fat_g",
-        "saturated_fat_g",
-        "carbohydrate_g",
-        "sugars_g",
-        "fibre_g",
-        "salt_g",
+    field_aliases = [
+        ("saturated_fat_g", ["saturated fat", "mettede fettsyrer", "mettet fett", "maettede fedtsyrer"], 50),
+        ("sugars_g", ["of which sugars", "hvorav sukkerarter", "heraf sukkerarter", "sugars"], 100),
+        ("carbohydrate_g", ["carbohydrate", "karbohydrat", "kulhydrat"], 100),
+        ("fibre_g", ["kostfiber", "fibre", "fiber"], 40),
+        ("protein_g", ["protein"], 45),
+        ("salt_g", ["salt"], 10),
+        ("fat_g", ["fat", "fett", "fedt"], 100),
     ]
-    for field, value in zip(ordered_fields, value_lines):
-        values[field] = value
+
+    for index, line in enumerate(table_lines):
+        line_key = searchable(line)
+        if has_any(line, ["energy", "energi"]):
+            energy_text = " ".join(table_lines[index : index + 2])
+            kj = find_energy_value(energy_text, "kj")
+            kcal = find_energy_value(energy_text, "kcal")
+            if not kj or not kcal:
+                pair = re.search(r"(\d{2,5})\s*/\s*(\d{2,4})", line_key)
+                if pair:
+                    kj = kj or pair.group(1)
+                    kcal = kcal or pair.group(2)
+            if kj:
+                values["energy_kj"] = kj
+            if kcal:
+                values["energy_kcal"] = kcal
+            continue
+
+        for field, aliases, maximum in field_aliases:
+            alias = next((candidate for candidate in aliases if searchable(candidate) in line_key), None)
+            if not alias:
+                continue
+            alias_position = line_key.find(searchable(alias)) + len(searchable(alias))
+            number_match = re.search(r"[<>]?\s*(\d+(?:[,.]\d+)?)", line_key[alias_position:])
+            if not number_match:
+                break
+            number = clean_value(number_match.group(1))
+            try:
+                numeric_value = float(number.replace(",", "."))
+            except ValueError:
+                break
+            if 0 <= numeric_value <= maximum:
+                values[field] = number
+            break
     return values
 
 
@@ -875,9 +1002,15 @@ def find_labeled_text(text: str, labels: list[str], max_lines: int = 2) -> Optio
 def extract_shelf_life_value(text: str) -> tuple[Optional[str], Optional[str]]:
     if not text:
         return None, None
-    match = re.search(
+    searchable_text = searchable(text)
+    preferred = re.search(
+        r"(?:datomerking\s+pose|production\s+date|produksjonsdato|\bpd\b)[^\n\r]{0,100}?\+\s*(\d+(?:[,.]\d+)?)\s*(days?|dager|months?|mnd|maneder|years?|ar|weeks?|uker)",
+        searchable_text,
+        flags=re.IGNORECASE,
+    )
+    match = preferred or re.search(
         r"(\d+(?:[,.]\d+)?)\s*(days?|dager|months?|mnd|maneder|years?|ar|weeks?|uker)",
-        searchable(text),
+        searchable_text,
         flags=re.IGNORECASE,
     )
     if not match:
@@ -885,7 +1018,32 @@ def extract_shelf_life_value(text: str) -> tuple[Optional[str], Optional[str]]:
     return clean_value(match.group(1)), clean_value(match.group(2))
 
 
-def find_temperature(text: str) -> Optional[str]:
+def extract_shelf_life_text(text: str | None) -> Optional[str]:
+    if not text:
+        return None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    preferred_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if has_any(line, ["datomerking pose", "production date", "produksjonsdato"])
+            and re.search(r"\b(?:pd\s*\+|produksjonsdato\s*\+)|\d+\s*(?:days?|dager|months?|mnd|maneder|years?|ar|weeks?|uker)", searchable(line))
+        ),
+        None,
+    )
+    if preferred_index is None:
+        preferred_index = next(
+            (index for index, line in enumerate(lines) if re.search(r"\d+\s*(?:days?|dager|months?|mnd|maneder|years?|ar|weeks?|uker)", searchable(line))),
+            None,
+        )
+    if preferred_index is None:
+        return clean_excerpt(text, 500)
+    return clean_excerpt(lines[preferred_index], 500)
+
+
+def find_temperature(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
     match = re.search(r"([+\-]?\d+(?:[,.]\d+)?\s*(?:deg\s*C|C)\s*(?:[-]\s*[+\-]?\d+(?:[,.]\d+)?\s*(?:deg\s*C|C))?)", searchable(text), flags=re.IGNORECASE)
     return clean_value(match.group(1)) if match else None
 

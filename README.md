@@ -135,6 +135,8 @@ Select **Phase 1 comparison** to export every successfully extracted document to
 
 Image-based allergen declarations receive a second table-oriented OCR pass. Yes/No values and declared quantities are mapped to dedicated fields and color-coded in Excel. A declaration that is detected without readable statuses is flagged for manual review rather than treated as allergen-free.
 
+Snack finished-product specifications support pipe-delimited and OCR label layouts. Named allergen declarations, explicit `Ingen allergener`, per-100-g nutrition rows, finished-product date marking, and storage wording are mapped conservatively. Finished-product date marking takes priority over ingredient shelf life, and frying/process temperatures are not exported as storage temperatures. OCR nutrition values that cannot be supported confidently remain `Not found` for review.
+
 Physical, chemical, typical-value, and microbiological specification tables are preserved row by row in the browser and in a dedicated `Specifications` sheet. Limits, ranges, units, qualifiers such as `max`/`min`/`approx`, and source evidence remain separate. Confident matches are also mapped into Phase 1 fields; unmatched rows stay visible instead of being forced into the wrong attribute.
 
 GNT Exberry specifications are recognized as a reusable supplier-family template. Their manufacturing, colouring, physical/chemical, microbiological, general appearance, nutrition, and shelf-life tables are captured consistently across product colours. Common OCR unit substitutions are normalized but remain marked for review when the source image is ambiguous.

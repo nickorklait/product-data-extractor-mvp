@@ -1123,23 +1123,57 @@ def map_allergen_value(
         "hazelnut": ["hazelnut", "hasselnott"],
         "almonds": ["almond", "almonds", "mandel", "mandler"],
     }
-    general_nuts_value = result.allergens.nuts or find_candidate_value(candidates, allergen_aliases["nuts"])
+    general_nuts_value = result.allergens.nuts or find_allergen_candidate_value(candidates, allergen_aliases["nuts"])
     if canonical_key in specific_nut_aliases:
-        value = find_candidate_value(candidates, specific_nut_aliases[canonical_key])
+        value = find_allergen_candidate_value(candidates, specific_nut_aliases[canonical_key])
+        if not value:
+            value = allergen_declaration_value(result.allergens.allergen_statement, specific_nut_aliases[canonical_key])
         if not value and normalize_yes_no_trace(general_nuts_value) == "No":
             value = "No"
     elif canonical_key == "othernuts":
-        value = find_candidate_value(candidates, ["other nuts", "andre notter"])
+        value = find_allergen_candidate_value(candidates, ["other nuts", "andre notter"])
+        if not value:
+            value = allergen_declaration_value(
+                result.allergens.allergen_statement,
+                ["other nuts", "andre notter", "andre typer notter"],
+            )
         if not value and normalize_yes_no_trace(general_nuts_value) == "No":
             value = "No"
     else:
-        value = allergen_fields.get(canonical_key) or find_candidate_value(
+        value = allergen_fields.get(canonical_key) or find_allergen_candidate_value(
             candidates,
             allergen_aliases.get(canonical_key, [canonical_key]),
         )
     if not value:
         return "", "", ""
     return normalize_yes_no_trace(value), "", "Mapped from allergen checklist/key-value candidates. Review OCR spelling."
+
+
+def find_allergen_candidate_value(candidates: list[Any], aliases: list[str]) -> str:
+    alias_keys = {simplify(alias) for alias in aliases if alias}
+    for candidate in candidates:
+        key = simplify(getattr(candidate, "key", ""))
+        value = str(getattr(candidate, "value", "") or "").strip()
+        if not key or not value:
+            continue
+        if key in alias_keys or any(key == f"allergenvalue{alias}" for alias in alias_keys):
+            return value
+    return ""
+
+
+def allergen_declaration_value(statement: str | None, aliases: list[str]) -> str:
+    if not statement:
+        return ""
+    statement_key = simplify(statement)
+    trace_match = re.search(r"(?:maycontain|kaninneholde|sporav)", statement_key)
+    direct_text = statement_key[: trace_match.start()] if trace_match else statement_key
+    trace_text = statement_key[trace_match.start() :] if trace_match else ""
+    alias_keys = [simplify(alias) for alias in aliases if alias]
+    if any(alias in direct_text for alias in alias_keys):
+        return "Yes"
+    if any(alias in trace_text for alias in alias_keys):
+        return "Traces"
+    return ""
 
 
 def canonical_allergen_key(attribute_key: str) -> str:
